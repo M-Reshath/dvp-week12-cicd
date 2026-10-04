@@ -1,5 +1,5 @@
 pipeline {
-    agent any
+    agent { label 'vm-docker' }
 
     environment {
         IMAGE = "reshath/dvp-week12-app"
@@ -15,30 +15,26 @@ pipeline {
 
         stage('Build & Test') {
             steps {
-                bat 'python -m pip install -r requirements.txt'
-                bat 'python -m pytest -q'
+                sh '''
+                    python3 -m venv .venv
+                    . .venv/bin/activate
+                    pip install -r requirements.txt
+                    python -m pytest -q
+                '''
             }
         }
 
-        stage('SonarQube Analysis') {
+        stage('SonarQube Analysis + Quality Gate') {
             steps {
                 withSonarQubeEnv('sonarqube') {
-                    bat "${tool 'sonar-scanner'}\\bin\\sonar-scanner.bat"
-                }
-            }
-        }
-
-        stage('Quality Gate') {
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
+                    sh "${tool 'sonar-scanner'}/bin/sonar-scanner -Dsonar.qualitygate.wait=true"
                 }
             }
         }
 
         stage('Docker Build') {
             steps {
-                bat "docker build -t %IMAGE%:%TAG% -t %IMAGE%:latest ."
+                sh 'docker build -t $IMAGE:$TAG -t $IMAGE:latest .'
             }
         }
 
@@ -46,22 +42,22 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
                                  usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
-                    bat 'echo %DH_PASS% | docker login -u %DH_USER% --password-stdin'
-                    bat "docker push %IMAGE%:%TAG%"
-                    bat "docker push %IMAGE%:latest"
+                    sh 'echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin'
+                    sh 'docker push $IMAGE:$TAG'
+                    sh 'docker push $IMAGE:latest'
                 }
             }
         }
 
         stage('Deploy') {
             steps {
-                bat 'docker rm -f dvp-week12-app 2>nul || exit 0'
-                bat "docker run -d --name dvp-week12-app -p 5000:5000 %IMAGE%:latest"
+                sh 'docker rm -f dvp-week12-app || true'
+                sh 'docker run -d --name dvp-week12-app -p 5000:5000 $IMAGE:latest'
             }
         }
     }
 
     post {
-        always { bat 'docker logout' }
+        always { sh 'docker logout || true' }
     }
 }
